@@ -2065,7 +2065,122 @@ CURLcode Curl_http_host(struct Curl_easy *data, struct connectdata *conn)
   return CURLE_OK;
 }
 
+/*
+ * Append the request-target to the HTTP request
+ */
+CURLcode Curl_http_target(struct Curl_easy *data,
+                          struct connectdata *conn,
+                          struct dynbuf *r)
+{
+  CURLcode result = CURLE_OK;
+  bool paste_ftp_userpwd = FALSE;
+  const char *path = data->state.up.path;
+  const char *query = data->state.up.query;
 
+  if(data->set.str[STRING_TARGET]) {
+    path = data->set.str[STRING_TARGET];
+    query = NULL;
+  }
+
+#ifndef CURL_DISABLE_PROXY
+  else if(conn->bits.httpproxy && !conn->bits.tunnel_proxy) {
+    /* Using a proxy but does not tunnel through it */
+
+    /* The path sent to the proxy is in fact the entire URL. But if the remote
+       host is a IDN-name, we must make sure that the request we produce only
+       uses the encoded host name! */
+
+    /* and no fragment part */
+    CURLUcode uc;
+    char *url;
+    CURLU *h = curl_url_dup(data->state.uh);
+    if(!h)
+      return CURLE_OUT_OF_MEMORY;
+
+    if(conn->host.dispname != conn->host.name) {
+      uc = curl_url_set(h, CURLUPART_HOST, conn->host.name, 0);
+      if(uc) {
+        curl_url_cleanup(h);
+        return CURLE_OUT_OF_MEMORY;
+      }
+    }
+    uc = curl_url_set(h, CURLUPART_FRAGMENT, NULL, 0);
+    if(uc) {
+      curl_url_cleanup(h);
+      return CURLE_OUT_OF_MEMORY;
+    }
+
+    if(strcasecompare("http", data->state.up.scheme)) {
+      /* when getting HTTP, we don't want the userinfo the URL */
+      uc = curl_url_set(h, CURLUPART_USER, NULL, 0);
+      if(uc) {
+        curl_url_cleanup(h);
+        return CURLE_OUT_OF_MEMORY;
+      }
+      uc = curl_url_set(h, CURLUPART_PASSWORD, NULL, 0);
+      if(uc) {
+        curl_url_cleanup(h);
+        return CURLE_OUT_OF_MEMORY;
+      }
+    }
+    /* Extract the URL to use in the request. Store in STRING_TEMP_URL for
+       clean-up reasons if the function returns before the free() further
+       down. */
+    uc = curl_url_get(h, CURLUPART_URL, &url, 0);
+    if(uc) {
+      curl_url_cleanup(h);
+      return CURLE_OUT_OF_MEMORY;
+    }
+
+    curl_url_cleanup(h);
+
+    /* url */
+    result = Curl_dyn_add(r, url);
+    free(url);
+    if(result)
+      return (result);
+
+    if(strcasecompare("ftp", data->state.up.scheme)) {
+      if(data->set.proxy_transfer_mode) {
+        /* when doing ftp, append ;type=<a|i> if not present */
+        char *type = strstr(path, ";type=");
+        if(type && type[6] && type[7] == 0) {
+          switch(Curl_raw_toupper(type[6])) {
+          case 'A':
+          case 'D':
+          case 'I':
+            break;
+          default:
+            type = NULL;
+          }
+        }
+        if(!type) {
+          result = Curl_dyn_addf(r, "%s;type=%c",
+                                 data->set.prefer_ascii ? 'a' : 'i');
+          if(result)
+            return result;
+        }
+      }
+      if(conn->bits.user_passwd)
+        paste_ftp_userpwd = TRUE;
+    }
+  }
+
+  else
+#endif
+  if(paste_ftp_userpwd)
+    result = Curl_dyn_addf(r, "ftp://%s:%s@%s", conn->user, conn->passwd,
+                           path + sizeof("ftp://") - 1);
+  else {
+    result = Curl_dyn_add(r, path);
+    if(result)
+      return result;
+    if(query)
+      result = Curl_dyn_addf(r, "?%s", query);
+  }
+
+  return result;
+}
 
 #ifndef USE_HYPER
 /*
@@ -2078,11 +2193,7 @@ CURLcode Curl_http(struct connectdata *conn, bool *done)
   struct Curl_easy *data = conn->data;
   CURLcode result = CURLE_OK;
   struct HTTP *http;
-  const char *path = data->state.up.path;
-  const char *query = data->state.up.query;
   Curl_HttpReq httpreq;
-  bool paste_ftp_userpwd = FALSE;
-  char ftp_typecode[sizeof("/;type=?")] = "";
   const char *te = ""; /* transfer-encoding */
   const char *ptr;
   const char *request;
@@ -2162,12 +2273,13 @@ CURLcode Curl_http(struct connectdata *conn, bool *done)
   /* setup the authentication headers */
   {
     char *pq = NULL;
-    if(query && *query) {
-      pq = aprintf("%s?%s", path, query);
+    if(data->state.up.query) {
+      pq = aprintf("%s?%s", data->state.up.path, data->state.up.query);
       if(!pq)
         return CURLE_OUT_OF_MEMORY;
     }
-    result = Curl_http_output_auth(conn, request, (pq ? pq : path), FALSE);
+    result = Curl_http_output_auth(conn, request,
+                                   (pq ? pq : data->state.up.path), FALSE);
     free(pq);
     if(result)
       return result;
@@ -2320,88 +2432,6 @@ CURLcode Curl_http(struct connectdata *conn, bool *done)
       te = "Transfer-Encoding: chunked\r\n";
   }
 
-#ifndef CURL_DISABLE_PROXY
-  if(conn->bits.httpproxy && !conn->bits.tunnel_proxy) {
-    /* Using a proxy but does not tunnel through it */
-
-    /* The path sent to the proxy is in fact the entire URL. But if the remote
-       host is a IDN-name, we must make sure that the request we produce only
-       uses the encoded host name! */
-
-    /* and no fragment part */
-    CURLUcode uc;
-    CURLU *h = curl_url_dup(data->state.uh);
-    if(!h)
-      return CURLE_OUT_OF_MEMORY;
-
-    if(conn->host.dispname != conn->host.name) {
-      uc = curl_url_set(h, CURLUPART_HOST, conn->host.name, 0);
-      if(uc) {
-        curl_url_cleanup(h);
-        return CURLE_OUT_OF_MEMORY;
-      }
-    }
-    uc = curl_url_set(h, CURLUPART_FRAGMENT, NULL, 0);
-    if(uc) {
-      curl_url_cleanup(h);
-      return CURLE_OUT_OF_MEMORY;
-    }
-
-    if(strcasecompare("http", data->state.up.scheme)) {
-      /* when getting HTTP, we don't want the userinfo the URL */
-      uc = curl_url_set(h, CURLUPART_USER, NULL, 0);
-      if(uc) {
-        curl_url_cleanup(h);
-        return CURLE_OUT_OF_MEMORY;
-      }
-      uc = curl_url_set(h, CURLUPART_PASSWORD, NULL, 0);
-      if(uc) {
-        curl_url_cleanup(h);
-        return CURLE_OUT_OF_MEMORY;
-      }
-    }
-    /* Extract the URL to use in the request. Store in STRING_TEMP_URL for
-       clean-up reasons if the function returns before the free() further
-       down. */
-    uc = curl_url_get(h, CURLUPART_URL, &data->set.str[STRING_TEMP_URL], 0);
-    if(uc) {
-      curl_url_cleanup(h);
-      return CURLE_OUT_OF_MEMORY;
-    }
-
-    curl_url_cleanup(h);
-
-    if(strcasecompare("ftp", data->state.up.scheme)) {
-      if(data->set.proxy_transfer_mode) {
-        /* when doing ftp, append ;type=<a|i> if not present */
-        char *type = strstr(path, ";type=");
-        if(type && type[6] && type[7] == 0) {
-          switch(Curl_raw_toupper(type[6])) {
-          case 'A':
-          case 'D':
-          case 'I':
-            break;
-          default:
-            type = NULL;
-          }
-        }
-        if(!type) {
-          char *p = ftp_typecode;
-          /* avoid sending invalid URLs like ftp://example.com;type=i if the
-           * user specified ftp://example.com without the slash */
-          if(!*data->state.up.path && path[strlen(path) - 1] != '/') {
-            *p++ = '/';
-          }
-          msnprintf(p, sizeof(ftp_typecode) - 1, ";type=%c",
-                    data->set.prefer_ascii ? 'a' : 'i');
-        }
-      }
-      if(conn->bits.user_passwd)
-        paste_ftp_userpwd = TRUE;
-    }
-  }
-#endif /* CURL_DISABLE_PROXY */
-
   p_accept = Curl_checkheaders(conn, "Accept")?NULL:"Accept: */*\r\n";
 
   if((HTTPREQ_POST == httpreq || HTTPREQ_PUT == httpreq) &&
@@ -2539,30 +2569,7 @@ CURLcode Curl_http(struct connectdata *conn, bool *done)
   if(result)
     return result;
 
-  if(data->set.str[STRING_TARGET]) {
-    path = data->set.str[STRING_TARGET];
-    query = NULL;
-  }
-
-#ifndef CURL_DISABLE_PROXY
-  /* url */
-  if(conn->bits.httpproxy && !conn->bits.tunnel_proxy) {
-    char *url = data->set.str[STRING_TEMP_URL];
-    result = Curl_dyn_add(&req, url);
-    Curl_safefree(data->set.str[STRING_TEMP_URL]);
-  }
-  else
-#endif
-  if(paste_ftp_userpwd)
-    result = Curl_dyn_addf(&req, "ftp://%s:%s@%s", conn->user, conn->passwd,
-                           path + sizeof("ftp://") - 1);
-  else {
-    result = Curl_dyn_add(&req, path);
-    if(result)
-      return result;
-    if(query)
-      result = Curl_dyn_addf(&req, "?%s", query);
-  }
+  result = Curl_http_target(data, conn, &req);
   if(result)
     return result;
 
@@ -2578,7 +2585,6 @@ CURLcode Curl_http(struct connectdata *conn, bool *done)
 #endif
   result =
     Curl_dyn_addf(&req,
-                  "%s" /* ftp typecode (;type=x) */
                   " HTTP/%s\r\n" /* HTTP version */
                   "%s" /* host */
                   "%s" /* proxyuserpwd */
@@ -2593,7 +2599,6 @@ CURLcode Curl_http(struct connectdata *conn, bool *done)
                   "%s" /* transfer-encoding */
                   "%s",/* Alt-Used */
 
-                  ftp_typecode,
                   httpstring,
                   (data->state.aptr.host?data->state.aptr.host:""),
                   data->state.aptr.proxyuserpwd?

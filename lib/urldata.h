@@ -1559,7 +1559,6 @@ enum dupstring {
   STRING_ALTSVC,                /* CURLOPT_ALTSVC */
   STRING_HSTS,                  /* CURLOPT_HSTS */
   STRING_SASL_AUTHZID,          /* CURLOPT_SASL_AUTHZID */
-  STRING_TEMP_URL,              /* temp URL storage for proxy use */
   STRING_DNS_SERVERS,
   STRING_DNS_INTERFACE,
   STRING_DNS_LOCAL_IP4,
