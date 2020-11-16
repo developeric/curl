@@ -2073,7 +2073,6 @@ CURLcode Curl_http_target(struct Curl_easy *data,
                           struct dynbuf *r)
 {
   CURLcode result = CURLE_OK;
-  bool paste_ftp_userpwd = FALSE;
   const char *path = data->state.up.path;
   const char *query = data->state.up.query;
 
@@ -2155,23 +2154,18 @@ CURLcode Curl_http_target(struct Curl_easy *data,
           }
         }
         if(!type) {
-          result = Curl_dyn_addf(r, "%s;type=%c",
+          result = Curl_dyn_addf(r, ";type=%c",
                                  data->set.prefer_ascii ? 'a' : 'i');
           if(result)
             return result;
         }
       }
-      if(conn->bits.user_passwd)
-        paste_ftp_userpwd = TRUE;
     }
   }
 
   else
 #endif
-  if(paste_ftp_userpwd)
-    result = Curl_dyn_addf(r, "ftp://%s:%s@%s", conn->user, conn->passwd,
-                           path + sizeof("ftp://") - 1);
-  else {
+  {
     result = Curl_dyn_add(r, path);
     if(result)
       return result;
