@@ -2083,7 +2083,7 @@ CURLcode Curl_http_target(struct Curl_easy *data,
   }
 
 #ifndef CURL_DISABLE_PROXY
-  else if(conn->bits.httpproxy && !conn->bits.tunnel_proxy) {
+  if(conn->bits.httpproxy && !conn->bits.tunnel_proxy) {
     /* Using a proxy but does not tunnel through it */
 
     /* The path sent to the proxy is in fact the entire URL. But if the remote
