@@ -2296,8 +2296,6 @@ CURLcode Curl_http(struct connectdata *conn, bool *done)
     if(!data->state.aptr.ref)
       return CURLE_OUT_OF_MEMORY;
   }
-  else
-    data->state.aptr.ref = NULL;
 
 #if !defined(CURL_DISABLE_COOKIES)
   if(data->set.str[STRING_COOKIE] && !Curl_checkheaders(conn, "Cookie"))
