@@ -368,7 +368,7 @@ static CURLcode post_per_transfer(struct GlobalConfig *global,
     else if(result && global->showerror) {
       char urlbuf[256]="";
       msnprintf(urlbuf, sizeof(urlbuf),
-                " [URL %s]", per->this_url);
+                " [URL %d: %s]", per->urlnum + 1, per->this_url);
       fprintf(global->errors, "curl: (%d) %s%s\n", result,
               (per->errorbuffer[0]) ? per->errorbuffer :
               curl_easy_strerror(result), urlbuf);
@@ -876,6 +876,7 @@ static CURLcode single_transfer(struct GlobalConfig *global,
         *added = TRUE;
         per->config = config;
         per->curl = curl;
+        per->urlnum = urlnode->num;
 
         /* default headers output stream is stdout */
         heads = &per->heads;
