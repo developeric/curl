@@ -598,6 +598,15 @@ CURLcode Curl_http(struct connectdata *conn, bool *done)
   if(p_accept && Curl_hyper_header(data, headers, p_accept))
     goto error;
 
+  Curl_safefree(data->state.aptr.ref);
+  if(data->change.referer && !Curl_checkheaders(conn, "Referer")) {
+    data->state.aptr.ref = aprintf("Referer: %s\r\n", data->change.referer);
+    if(!data->state.aptr.ref)
+      return CURLE_OUT_OF_MEMORY;
+    if(Curl_hyper_header(data, headers, data->state.aptr.ref))
+      goto error;
+  }
+
   result = Curl_add_custom_headers(conn, FALSE, headers);
   if(result)
     return result;
