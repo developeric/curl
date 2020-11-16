@@ -439,6 +439,35 @@ CURLcode Curl_hyper_header(struct Curl_easy *data, hyper_headers *headers,
   return CURLE_OK;
 }
 
+static CURLcode request_target(struct Curl_easy *data,
+                               struct connectdata *conn,
+                               const char *method,
+                               bool h2,
+                               hyper_request *req)
+{
+  CURLcode result;
+  struct dynbuf r;
+
+  Curl_dyn_init(&r, DYN_HTTP_REQUEST);
+
+  result = Curl_http_target(data, conn, &r);
+  if(result)
+    return result;
+
+  if(hyper_request_set_uri(req, (uint8_t *)Curl_dyn_uptr(&r),
+                           Curl_dyn_len(&r))) {
+    failf(data, "error setting path\n");
+    result = CURLE_OUT_OF_MEMORY;
+  }
+  else
+    result = debug_request(data, method, Curl_dyn_ptr(&r), h2);
+
+  Curl_dyn_free(&r);
+
+  return result;
+}
+
+
 /*
  * Curl_http() gets called from the generic multi_do() function when a HTTP
  * request is to be performed. This creates and sends a properly constructed
@@ -547,16 +576,10 @@ CURLcode Curl_http(struct connectdata *conn, bool *done)
     failf(data, "error setting method\n");
     goto error;
   }
-  if(hyper_request_set_uri(req, (uint8_t *)data->state.up.path,
-                           strlen(data->state.up.path))) {
-    failf(data, "error setting path\n");
-    goto error;
-  }
 
-  if(debug_request(data, method, data->state.up.path, h2)) {
-    failf(data, "debug callback\n");
+  result = request_target(data, conn, method, h2, req);
+  if(result)
     goto error;
-  }
 
   headers = hyper_request_headers(req);
   if(!headers) {
