@@ -491,6 +491,7 @@ CURLcode Curl_http(struct connectdata *conn, bool *done)
   const char *method;
   Curl_HttpReq httpreq;
   bool h2 = FALSE;
+  struct dynbuf dynreq;
 
   /* Always consider the DO phase done after this function call, even if there
      may be parts of the request that is not yet sent, since we can deal with
@@ -602,9 +603,21 @@ CURLcode Curl_http(struct connectdata *conn, bool *done)
   if(data->change.referer && !Curl_checkheaders(conn, "Referer")) {
     data->state.aptr.ref = aprintf("Referer: %s\r\n", data->change.referer);
     if(!data->state.aptr.ref)
-      return CURLE_OUT_OF_MEMORY;
+      goto error;
     if(Curl_hyper_header(data, headers, data->state.aptr.ref))
       goto error;
+  }
+
+  Curl_dyn_init(&dynreq, DYN_HTTP_REQUEST);
+  result = Curl_http_cookies(data, conn, &dynreq);
+  if(result) {
+    Curl_dyn_free(&dynreq);
+    goto error;
+  }
+  if(Curl_dyn_len(&dynreq)) {
+    /* we have a Cookie: header */
+    Curl_hyper_header(data, headers, Curl_dyn_ptr(&dynreq));
+    Curl_dyn_free(&dynreq);
   }
 
   result = Curl_add_custom_headers(conn, FALSE, headers);
