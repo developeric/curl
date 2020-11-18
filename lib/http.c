@@ -2176,6 +2176,67 @@ CURLcode Curl_http_target(struct Curl_easy *data,
   return result;
 }
 
+#if !defined(CURL_DISABLE_COOKIES)
+CURLcode Curl_http_cookies(struct Curl_easy *data,
+                           struct connectdata *conn,
+                           struct dynbuf *r)
+{
+  CURLcode result = CURLE_OK;
+  char *addcookies = NULL;
+
+  if(data->set.str[STRING_COOKIE] && !Curl_checkheaders(conn, "Cookie"))
+    addcookies = data->set.str[STRING_COOKIE];
+
+  if(data->cookies || addcookies) {
+    struct Cookie *co = NULL; /* no cookies from start */
+    int count = 0;
+
+    if(data->cookies && data->state.cookie_engine) {
+      Curl_share_lock(data, CURL_LOCK_DATA_COOKIE, CURL_LOCK_ACCESS_SINGLE);
+      co = Curl_cookie_getlist(data->cookies,
+                               data->state.aptr.cookiehost?
+                               data->state.aptr.cookiehost:
+                               conn->host.name,
+                               data->state.up.path,
+                               (conn->handler->protocol&CURLPROTO_HTTPS)?
+                               TRUE:FALSE);
+      Curl_share_unlock(data, CURL_LOCK_DATA_COOKIE);
+    }
+    if(co) {
+      struct Cookie *store = co;
+      /* now loop through all cookies that matched */
+      while(co) {
+        if(co->value) {
+          if(0 == count) {
+            result = Curl_dyn_add(r, "Cookie: ");
+            if(result)
+              break;
+          }
+          result = Curl_dyn_addf(r, "%s%s=%s", count?"; ":"",
+                                 co->name, co->value);
+          if(result)
+            break;
+          count++;
+        }
+        co = co->next; /* next cookie please */
+      }
+      Curl_cookie_freelist(store);
+    }
+    if(addcookies && !result) {
+      if(!count)
+        result = Curl_dyn_add(r, "Cookie: ");
+      if(!result) {
+        result = Curl_dyn_addf(r, "%s%s", count?"; ":"", addcookies);
+        count++;
+      }
+    }
+    if(count && !result)
+      result = Curl_dyn_add(r, "\r\n");
+  }
+  return result;
+}
+#endif
+
 #ifndef USE_HYPER
 /*
  * Curl_http() gets called from the generic multi_do() function when a HTTP
@@ -2191,9 +2252,6 @@ CURLcode Curl_http(struct connectdata *conn, bool *done)
   const char *te = ""; /* transfer-encoding */
   const char *ptr;
   const char *request;
-#if !defined(CURL_DISABLE_COOKIES)
-  char *addcookies = NULL;
-#endif
   curl_off_t included_body = 0;
   const char *httpstring;
   struct dynbuf req;
@@ -2296,11 +2354,6 @@ CURLcode Curl_http(struct connectdata *conn, bool *done)
     if(!data->state.aptr.ref)
       return CURLE_OUT_OF_MEMORY;
   }
-
-#if !defined(CURL_DISABLE_COOKIES)
-  if(data->set.str[STRING_COOKIE] && !Curl_checkheaders(conn, "Cookie"))
-    addcookies = data->set.str[STRING_COOKIE];
-#endif
 
   if(!Curl_checkheaders(conn, "Accept-Encoding") &&
      data->set.str[STRING_ENCODING]) {
@@ -2641,57 +2694,9 @@ CURLcode Curl_http(struct connectdata *conn, bool *done)
       return result;
   }
 
-#if !defined(CURL_DISABLE_COOKIES)
-  if(data->cookies || addcookies) {
-    struct Cookie *co = NULL; /* no cookies from start */
-    int count = 0;
-
-    if(data->cookies && data->state.cookie_engine) {
-      Curl_share_lock(data, CURL_LOCK_DATA_COOKIE, CURL_LOCK_ACCESS_SINGLE);
-      co = Curl_cookie_getlist(data->cookies,
-                               data->state.aptr.cookiehost?
-                               data->state.aptr.cookiehost:
-                               conn->host.name,
-                               data->state.up.path,
-                               (conn->handler->protocol&CURLPROTO_HTTPS)?
-                               TRUE:FALSE);
-      Curl_share_unlock(data, CURL_LOCK_DATA_COOKIE);
-    }
-    if(co) {
-      struct Cookie *store = co;
-      /* now loop through all cookies that matched */
-      while(co) {
-        if(co->value) {
-          if(0 == count) {
-            result = Curl_dyn_add(&req, "Cookie: ");
-            if(result)
-              break;
-          }
-          result = Curl_dyn_addf(&req, "%s%s=%s", count?"; ":"",
-                                 co->name, co->value);
-          if(result)
-            break;
-          count++;
-        }
-        co = co->next; /* next cookie please */
-      }
-      Curl_cookie_freelist(store);
-    }
-    if(addcookies && !result) {
-      if(!count)
-        result = Curl_dyn_add(&req, "Cookie: ");
-      if(!result) {
-        result = Curl_dyn_addf(&req, "%s%s", count?"; ":"", addcookies);
-        count++;
-      }
-    }
-    if(count && !result)
-      result = Curl_dyn_add(&req, "\r\n");
-
-    if(result)
-      return result;
-  }
-#endif
+  result = Curl_http_cookies(data, conn, &req);
+  if(result)
+    return result;
 
   result = Curl_add_timecondition(conn, &req);
   if(result)

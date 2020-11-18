@@ -85,6 +85,13 @@ CURLcode Curl_http_statusline(struct Curl_easy *data,
                               struct connectdata *conn);
 CURLcode Curl_http_header(struct Curl_easy *data, struct connectdata *conn,
                           char *headp);
+#ifndef CURL_DISABLE_COOKIES
+CURLcode Curl_http_cookies(struct Curl_easy *data,
+                           struct connectdata *conn,
+                           struct dynbuf *r);
+#else
+#define Curl_http_cookies(x,y,z) CURLE_OK
+#endif
 
 /* protocol-specific functions set up to be called by the main engine */
 CURLcode Curl_http(struct connectdata *conn, bool *done);
