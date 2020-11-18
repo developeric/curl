@@ -136,7 +136,7 @@ void ourWriteOut(CURL *curl, struct per_transfer *per, const char *writeinfo,
                 fputs(per->this_url, stream);
                 break;
               case VAR_URLNUM:
-                fprintf(stream, "%d", per->urlnum);
+                fprintf(stream, "%u", per->urlnum);
                 break;
               case VAR_EFFECTIVE_URL:
                 if((CURLE_OK ==
